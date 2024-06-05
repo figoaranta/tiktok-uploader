@@ -36,6 +36,11 @@ def upload_video(
     filename=None,
     description="",
     cookies="",
+    song_keywords="",
+    sound_title="",
+    artist_name="",
+    duration="",
+    index=0,
     schedule: datetime.datetime = None,
     username="",
     password="",
@@ -75,7 +80,18 @@ def upload_video(
     )
 
     return upload_videos(
-        videos=[{"path": filename, "description": description, "schedule": schedule}],
+        videos=[
+            {
+                "path": filename,
+                "description": description,
+                "schedule": schedule,
+                "song_keywords": song_keywords,
+                "sound_title": sound_title,
+                "artist_name": artist_name,
+                "duration": duration,
+                "index": index,
+            }
+        ],
         auth=auth,
         proxy=proxy,
         *args,
@@ -151,6 +167,7 @@ def upload_videos(
             logger.error("Proxy is not working")
             driver.quit()
             raise Exception("Proxy is not working")
+    driver.set_window_size(800, 600)
     driver = auth.authenticate_agent(driver)
 
     failed = []
@@ -159,15 +176,27 @@ def upload_videos(
         try:
             path = abspath(video.get("path"))
             description = video.get("description", "")
+            song_keywords = video.get("song_keywords", "")
             schedule = video.get("schedule", None)
+            sound_title = video.get("sound_title", "")
+            artist_name = video.get("artist_name", "")
+            duration = video.get("duration", "")
+            index = video.get("index", 0)
 
             logger.debug(
                 "Posting %s%s",
                 bold(video.get("path")),
-                f'\n{" " * 15}with description: {bold(description)}'
-                if description
-                else "",
-            )
+                (
+                    f'\n{" " * 15}with description: {bold(description)}'
+                    if description
+                    else ""
+                ),
+            ),
+            (
+                f'\n{" " * 15}with song keywords: {bold(song_keywords)}'
+                if song_keywords
+                else ""
+            ),
 
             # Video must be of supported type
             if not _check_valid_path(path):
@@ -207,6 +236,11 @@ def upload_videos(
                 path,
                 description,
                 schedule,
+                song_keywords,
+                sound_title,
+                artist_name,
+                duration,
+                index,
                 num_retries=num_retries,
                 skip_split_window=skip_split_window,
                 headless=headless,
@@ -232,6 +266,11 @@ def complete_upload_form(
     path: str,
     description: str,
     schedule: datetime.datetime,
+    song_keywords: str,
+    sound_title: str,
+    artist_name: str,
+    duration: str,
+    index: int,
     skip_split_window: bool,
     headless=False,
     *args,
@@ -264,13 +303,109 @@ def complete_upload_form(
     # Wait for the upload to complete before proceeding
     upload_complete_event.wait()
 
-    if not skip_split_window:
-        _remove_split_window(driver)
-    _set_interactivity(driver, **kwargs)
+    # if not skip_split_window:
+    #     _remove_split_window(driver)
+    # _set_interactivity(driver, **kwargs)
     _set_description(driver, description)
+    _set_sound(driver, song_keywords, sound_title, artist_name, duration, index)
     if schedule:
         _set_schedule_video(driver, schedule)
     _post_video(driver)
+    driver.quit()
+
+
+def _set_sound(
+    driver, song_keywords, sound_title, artist_name, duration, index
+) -> None:
+    """
+    Sets the sound of the video
+    """
+    logger.debug(green("Setting sound"))
+
+    edit_video_button = WebDriverWait(driver, config["explicit_wait"]).until(
+        EC.presence_of_element_located(
+            (
+                By.XPATH,
+                "//button[@class='TUXButton TUXButton--default TUXButton--medium TUXButton--secondary']",
+            )
+        )
+    )
+    edit_video_button.click()
+
+    sound_text_box = WebDriverWait(driver, config["explicit_wait"]).until(
+        EC.presence_of_element_located(
+            (By.XPATH, "//input[contains(@class, 'search-bar-input')]")
+        )
+    )
+    sound_text_box.click()
+
+    words = song_keywords.split(" ")
+    for word in words:
+        sound_text_box.send_keys(word + " ")
+
+    search_sound = WebDriverWait(driver, config["explicit_wait"]).until(
+        EC.presence_of_element_located(
+            (By.XPATH, "//div[contains(@class, 'search-bar-button')]")
+        )
+    )
+    search_sound.click()
+
+    list_container = WebDriverWait(driver, config["explicit_wait"]).until(
+        EC.presence_of_element_located(
+            (By.XPATH, "(//div[contains(@class, 'list-container')])")
+        )
+    )
+    time.sleep(3)
+    duration_and_artist_name = f"{duration} · {artist_name}"
+    targeted_children = []
+    for child in list_container.find_elements(
+        By.XPATH, ".//div[contains(@class, 'music-card-container')]"
+    ):
+        title = child.find_element(
+            By.XPATH, ".//div[contains(@class, 'music-card-title')]"
+        )
+        other = child.find_element(
+            By.XPATH, ".//div[contains(@class, 'music-card-other')]"
+        )
+        if not sound_title and not artist_name and not duration:
+            targeted_children.append(child)
+        else:
+            if sound_title and (artist_name or duration):
+                if (sound_title in title.text) and (
+                    duration_and_artist_name in other.text
+                ):
+                    targeted_children.append(child)
+            elif sound_title and (sound_title in title.text):
+                targeted_children.append(child)
+            elif (duration or artist_name) and (duration_and_artist_name in other.text):
+                targeted_children.append(child)
+
+    if not targeted_children:
+        logger.debug(green("Sound clicked"))
+        raise Exception("Sound not found")
+
+    sound = targeted_children[index]
+    children = sound.find_elements(By.XPATH, ".//*")
+    children[0].click()
+
+    use_button = sound.find_element(
+        By.XPATH, ".//div[contains(@class, 'jsx-1237594283 music-card-operation')]"
+    )
+    use_button.click()
+
+    logger.debug(green("Sound clicked"))
+    time.sleep(2)
+    save_edit = WebDriverWait(driver, config["explicit_wait"]).until(
+        EC.presence_of_element_located(
+            (
+                By.XPATH,
+                ".//button[contains(@class, 'TUXButton TUXButton--default TUXButton--medium TUXButton--primary')]",
+            )
+        )
+    )
+    save_edit.click()
+
+    logger.debug(green("Sound set"))
 
 
 def _go_to_upload(driver) -> None:
@@ -285,6 +420,7 @@ def _go_to_upload(driver) -> None:
 
     # if the upload page is not open, navigate to it
     if driver.current_url != config["paths"]["upload"]:
+        time.sleep(1)
         driver.get(config["paths"]["upload"])
     # otherwise, refresh the page and accept the reload alert
     else:
@@ -746,7 +882,7 @@ def _post_video(driver) -> None:
     try:
         post = WebDriverWait(driver, config["implicit_wait"]).until(
             EC.element_to_be_clickable(
-                (By.XPATH, config["selectors"]["upload"]["post"])
+                (By.XPATH, "//button[contains(@class, 'TUXButton--primary')]")
             )
         )
         driver.execute_script(
@@ -755,11 +891,12 @@ def _post_video(driver) -> None:
         post.click()
     except ElementClickInterceptedException:
         logger.debug(green("Trying to click on the button again"))
-        driver.execute_script('document.querySelector(".TUXButton--primary").click()')
+        driver.execute_script('document.querySelector(".btn-post > button").click()')
 
     # waits for the video to upload
+    time.sleep(5)
     post_confirmation = EC.presence_of_element_located(
-        (By.XPATH, config["selectors"]["upload"]["post_confirmation"])
+        (By.XPATH, "//button[contains(@class, 'TUXButton--primary')]")
     )
     WebDriverWait(driver, config["explicit_wait"]).until(post_confirmation)
 
